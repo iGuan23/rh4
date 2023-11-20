@@ -1,0 +1,96 @@
+__global__ void reduce_123(float* output, const float* input)
+{
+    extern __shared__ unsigned accumulator[];
+
+    // Thread id
+    unsigned tid = threadIdx.x;
+
+    // Index of data element to access
+    unsigned idx = blockIdx.x * blockDim.x + tid;
+
+    // Each thread loads one element from global to shared memory
+    accumulator[tid] = input[idx];
+    // Barrier, wait for all threads
+    __syncthreads();
+
+#if defined(REDUCE_1)
+    for (unsigned stride = 1; stride < blockDim.x; stride *= 2) {
+        if (tid % (2 * stride) == 0)
+            accumulator[tid] += accumulator[tid + stride];
+        __syncthreads();
+    }
+
+#elif defined(REDUCE_2)
+    for (unsigned stride = 1; stride < blockDim.x; stride *= 2) {
+        int i = tid * stride * 2;
+        if (i < blockDim.x)
+            accumulator[i] += accumulator[i + stride];
+        __syncthreads();
+    }
+
+#elif defined(REDUCE_3)
+
+    for (unsigned stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride)
+            accumulator[tid] += accumulator[tid + stride];
+        __syncthreads();
+    }
+
+#elif defined(REDUCE_3_MULTI)
+
+    unsigned factor = 2;
+
+    for (unsigned stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < (stride * factor))
+            accumulator[tid] += accumulator[tid + stride * factor];
+        __syncthreads();
+    }
+
+#endif
+
+    // First thread writes result to global memory
+    if (tid == 0) {
+        output[blockIdx.x] = accumulator[0];
+    }
+}
+
+__global__ void reduce_4(float* output, const float* input)
+{
+    extern __shared__ unsigned accumulator[];
+
+    // Thread id
+    unsigned tid = threadIdx.x;
+
+    // Do two loads instead of one
+    // Important! Halve the number of blocks
+    unsigned idx = blockIdx.x * blockDim.x * 2 + tid;
+    accumulator[tid] = input[idx] + input[idx + blockDim.x];
+
+#if defined(REDUCE_4)
+    for (unsigned stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride)
+            accumulator[tid] += accumulator[tid + stride];
+        __syncthreads();
+    }
+
+#elif defined(REDUCE_5)
+    for (unsigned stride = blockDim.x / 2; stride > 32; stride /= 2) {
+        if (tid < stride)
+            accumulator[tid] += accumulator[tid + stride];
+        __syncthreads();
+    }
+
+    if (tid < 32) {
+        accumulator[tid] += accumulator[tid + 32];
+        accumulator[tid] += accumulator[tid + 16];
+        accumulator[tid] += accumulator[tid + 8];
+        accumulator[tid] += accumulator[tid + 4];
+        accumulator[tid] += accumulator[tid + 2];
+        accumulator[tid] += accumulator[tid + 1];
+    }
+#endif
+
+    if (tid == 0) {
+        output[blockIdx.x] = accumulator[0];
+    }
+}
